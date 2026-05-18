@@ -11,6 +11,7 @@ export default {
 
     const routes = {
       'GET:/': () => handleHome(env, url),
+      'GET:/search': () => handleSearch(env, url),
       'GET:/login': () => handleLoginPage(),
       'POST:/login': () => handleLogin(request, env),
       'GET:/logout': () => handleLogout(request, env),
@@ -28,7 +29,7 @@ export default {
 function getCookie(req, name) { const c=req.headers.get('Cookie')||''; const m=c.match(new RegExp(`${name}=([^;]+)`)); return m?m[1]:null; }
 async function isAuth(req, env) { const t=getCookie(req,'session'); if(!t) return false; const s=await env.BLOG_KV.get(`session:${t}`,'json'); return s&&Date.now()<s.expiresAt; }
 function genToken() { const a=new Uint8Array(32); crypto.getRandomValues(a); return Array.from(a,b=>b.toString(16).padStart(2,'0')).join(''); }
-function redir(p,h={}) { return new Response(null,{status:302,headers:{Location:p,...h}}); }
+function redir(p,h={}) { const headers = new Headers({Location:p}); Object.entries(h).forEach(([k,v])=>headers.set(k,v)); return new Response(null,{status:302,headers}); }
 async function getIndex(env) { return (await env.BLOG_KV.get('articles:index','json'))||[]; }
 async function saveIndex(env,idx) { await env.BLOG_KV.put('articles:index',JSON.stringify(idx)); }
 function slugify(t) { return t.toLowerCase().replace(/[^a-z0-9一-鿿]+/g,'-').replace(/^-|-$/g,'')||`post-${Date.now()}`; }
@@ -47,19 +48,21 @@ const HEAD_COMMON = `<meta charset="utf-8"><meta name="viewport" content="width=
 // --- Front page layout (homepage, article, login) ---
 function frontPage(title, content, env) {
   const blogTitle = (env&&env.BLOG_TITLE)||'Chronicle';
-  const blogDesc = (env&&env.BLOG_DESC)||'关于设计与技术的深度思考';
+  const blogDesc = (env&&env.BLOG_DESC)||'';
   return `<!DOCTYPE html><html lang="zh-CN"><head>${HEAD_COMMON}<title>${esc(title)}</title></head>
 <body class="bg-background text-on-background font-body-md selection:bg-primary-fixed-dim selection:text-primary antialiased">
 <header class="bg-background border-b border-outline-variant sticky top-0 z-50">
 <div class="flex justify-between items-center max-w-[1200px] mx-auto px-gutter h-20">
 <div class="flex items-center gap-12"><a class="font-display text-headline-md text-primary tracking-tighter" href="/">${esc(blogTitle)}</a>
 <nav class="hidden md:flex items-center gap-8"><a class="font-label-caps text-label-caps text-primary border-b-2 border-primary" href="/">随笔</a><a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="/login">管理</a></nav></div>
-<div class="flex items-center gap-stack-md"><span class="material-symbols-outlined text-primary cursor-pointer hover:opacity-80">rss_feed</span></div>
+<div class="flex items-center gap-stack-md">
+<form action="/search" method="GET" class="relative hidden sm:block"><span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px]">search</span><input name="q" class="bg-surface-container-low border-none rounded-full pl-10 pr-4 py-2 text-body-md w-48 focus:w-64 focus:ring-1 focus:ring-primary transition-all" placeholder="搜索文章..."></form>
+</div>
 </div></header>
 ${content}
 <footer class="bg-background border-t border-outline-variant mt-section-padding">
 <div class="flex flex-col md:flex-row justify-between items-center max-w-[720px] mx-auto py-stack-lg px-gutter">
-<div class="mb-stack-md md:mb-0 text-center md:text-left"><p class="font-display text-headline-md text-primary mb-1">${esc(blogTitle)}</p><p class="font-body-md text-body-md text-secondary">&copy; ${new Date().getFullYear()} ${esc(blogTitle)}. 读者至上.</p></div>
+<div class="mb-stack-md md:mb-0 text-center md:text-left"><p class="font-display text-headline-md text-primary mb-1">${esc(blogTitle)}</p><p class="font-body-md text-body-md text-secondary">&copy; ${new Date().getFullYear()} ${esc(blogTitle)}</p></div>
 <div class="flex gap-stack-lg"><a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="/">存档</a><a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="/login">管理</a></div>
 </div></footer></body></html>`;
 }
@@ -91,7 +94,6 @@ async function handleHome(env, url) {
   const tp = Math.ceil(pub.length/pp)||1;
   const arts = pub.slice((pg-1)*pp, pg*pp);
   const blogTitle = env.BLOG_TITLE||'Chronicle';
-  const blogDesc = env.BLOG_DESC||'关于设计与技术的深度思考';
 
   let featured = '';
   let gridItems = '';
@@ -117,16 +119,8 @@ async function handleHome(env, url) {
 
   const empty = arts.length === 0 ? '<p class="font-body-lg text-on-surface-variant py-12 text-center">暂无文章</p>' : '';
 
-  const content = `<main class="max-w-[1200px] mx-auto px-gutter py-section-padding">
-    <section class="mb-[80px] max-w-container-max-width">
-      <h1 class="font-display text-display mb-stack-md">${esc(blogDesc)}.</h1>
-    </section>
-    <div class="lg:grid lg:grid-cols-12 gap-stack-lg">
-      <div class="lg:col-span-8 space-y-12">${empty}${featured}${gridItems ? `<div class="grid grid-cols-1 md:grid-cols-2 gap-stack-lg">${gridItems}</div>` : ''}</div>
-      <aside class="lg:col-span-4 space-y-12 mt-12 lg:mt-0">
-        <div><h4 class="font-label-caps text-label-caps text-primary mb-stack-md uppercase tracking-widest border-b border-primary pb-2">关于</h4><p class="text-body-md text-on-surface-variant">${esc(blogDesc)}</p></div>
-      </aside>
-    </div>${pag}</main>`;
+  const content = `<main class="max-w-[1200px] mx-auto px-gutter py-12">
+    <div class="space-y-12">${empty}${featured}${gridItems ? `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-stack-lg">${gridItems}</div>` : ''}</div>${pag}</main>`;
   return html(frontPage(blogTitle, content, env));
 }
 
@@ -166,12 +160,40 @@ function handleLoginPage(err='') {
 
 async function handleLogin(req, env) {
   const f=await req.formData();
-  if(f.get('username')!==env.ADMIN_USER||f.get('password')!==env.ADMIN_PASS) return handleLoginPage('用户名或密码错误');
+  const username = (f.get('username')||'').trim();
+  const password = (f.get('password')||'').trim();
+  if(!env.ADMIN_USER||!env.ADMIN_PASS) return handleLoginPage('未配置管理员账号，请设置环境变量 ADMIN_USER 和 ADMIN_PASS');
+  if(username!==env.ADMIN_USER||password!==env.ADMIN_PASS) return handleLoginPage('用户名或密码错误');
   const t=genToken();
   await env.BLOG_KV.put(`session:${t}`,JSON.stringify({expiresAt:Date.now()+86400000}),{expirationTtl:86400});
-  return redir('/admin',{'Set-Cookie':`session=${t}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400`});
+  return redir('/admin',{'Set-Cookie':`session=${t}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`});
 }
 async function handleLogout(req,env) { const t=getCookie(req,'session'); if(t) await env.BLOG_KV.delete(`session:${t}`); return redir('/',{'Set-Cookie':'session=; Path=/; Max-Age=0'}); }
+
+async function handleSearch(env, url) {
+  const q = (url.searchParams.get('q')||'').trim().toLowerCase();
+  const idx = await getIndex(env);
+  let results = [];
+  if (q) {
+    for (const a of idx.filter(x=>x.published)) {
+      if (a.title.toLowerCase().includes(q)) { results.push(a); continue; }
+      const art = await env.BLOG_KV.get(`article:${a.slug}`,'json');
+      if (art && art.content.toLowerCase().includes(q)) results.push(a);
+    }
+  }
+  let list = '';
+  for (const a of results) {
+    const d = new Date(a.createdAt);
+    const date = `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`;
+    list += `<article class="border-b border-outline-variant py-6"><a href="/article/${a.slug}" class="block group"><div class="flex items-center gap-stack-sm mb-stack-sm"><span class="font-label-caps text-label-caps text-secondary">${date}</span></div><h3 class="font-headline-md text-headline-md mb-stack-sm group-hover:text-secondary transition-colors">${esc(a.title)}</h3></a></article>`;
+  }
+  const content = `<main class="max-w-[720px] mx-auto px-gutter py-12">
+    <form action="/search" method="GET" class="mb-8"><div class="relative"><span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span><input name="q" value="${esc(q)}" class="w-full bg-surface-container-low border border-outline-variant pl-12 pr-4 py-3 text-body-lg focus:ring-1 focus:ring-primary focus:border-primary transition-all" placeholder="搜索文章..." autofocus></div></form>
+    ${q ? `<p class="font-label-caps text-label-caps text-on-surface-variant mb-6 uppercase tracking-widest">搜索 "${esc(q)}" 找到 ${results.length} 篇文章</p>` : ''}
+    <div>${list||(!q?'<p class="text-on-surface-variant py-8 text-center">输入关键词搜索文章</p>':'<p class="text-on-surface-variant py-8 text-center">未找到相关文章</p>')}</div>
+  </main>`;
+  return html(frontPage('搜索', content, env));
+}
 
 async function handleAdmin(req, env) {
   if(!(await isAuth(req,env))) return redir('/login');
