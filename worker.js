@@ -21,152 +21,103 @@ export default {
 
     const handler = routes[`${method}:${path}`];
     if (handler) return handler();
-    return html(layout('404', `<div class="not-found"><div class="nf-code">404</div><p>页面不存在</p><a href="/" class="btn btn-primary">返回首页</a></div>`, env));
+    return html(layout('404', `<div class="nf"><span>404</span><p>页面不存在</p><a href="/">返回首页</a></div>`, env));
   }
 };
 
-// --- Auth ---
 function getCookie(request, name) {
   const cookie = request.headers.get('Cookie') || '';
   const match = cookie.match(new RegExp(`${name}=([^;]+)`));
   return match ? match[1] : null;
 }
-
 async function isAuthenticated(request, env) {
   const token = getCookie(request, 'session');
   if (!token) return false;
   const session = await env.BLOG_KV.get(`session:${token}`, 'json');
-  if (!session) return false;
-  return Date.now() < session.expiresAt;
+  return session && Date.now() < session.expiresAt;
 }
-
 function generateToken() {
   const arr = new Uint8Array(32);
   crypto.getRandomValues(arr);
   return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
 }
-
 function redirect(path, headers = {}) {
   return new Response(null, { status: 302, headers: { Location: path, ...headers } });
 }
-
-// --- KV ---
 async function getIndex(env) { return (await env.BLOG_KV.get('articles:index', 'json')) || []; }
 async function saveIndex(env, index) { await env.BLOG_KV.put('articles:index', JSON.stringify(index)); }
 function slugify(text) { return text.toLowerCase().replace(/[^a-z0-9一-鿿]+/g, '-').replace(/^-|-$/g, '') || `post-${Date.now()}`; }
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function html(body) { return new Response(body, { headers: { 'content-type': 'text/html;charset=UTF-8' } }); }
 
-// --- Handlers ---
 async function handleHome(env, url) {
   const page = parseInt(url.searchParams.get('page') || '1');
   const perPage = parseInt(env.POSTS_PER_PAGE || '10');
   const index = await getIndex(env);
   const published = index.filter(a => a.published);
-  const total = published.length;
-  const totalPages = Math.ceil(total / perPage);
+  const totalPages = Math.ceil(published.length / perPage) || 1;
   const articles = published.slice((page - 1) * perPage, page * perPage);
-
   const blogTitle = env.BLOG_TITLE || 'My Blog';
-  const blogDesc = env.BLOG_DESC || 'Record thoughts, share stories';
 
-  let content = `<section class="hero">
-    <div class="hero-inner">
-      <div class="hero-avatar">
-        <svg viewBox="0 0 80 80" width="80" height="80"><circle cx="40" cy="40" r="38" fill="var(--accent-light)" stroke="var(--accent)" stroke-width="2"/><text x="40" y="48" text-anchor="middle" font-size="28" fill="var(--accent)">${esc(blogTitle.charAt(0))}</text></svg>
-      </div>
-      <h1 class="hero-title">${esc(blogTitle)}</h1>
-      <p class="hero-desc">${esc(blogDesc)}</p>
-      <div class="hero-meta"><span>${total} articles</span></div>
-    </div>
-  </section>
-  <section class="posts-section">
-    <div class="section-header"><h2>Latest Posts</h2></div>`;
-
-  if (articles.length === 0) {
-    content += '<div class="empty-state"><div class="empty-icon"><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="var(--muted)" stroke-width="1.5"><path d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V9a2 2 0 012-2h2a2 2 0 012 2v9a2 2 0 01-2 2h-2z"/></svg></div><p>No posts yet</p></div>';
-  } else {
-    content += '<div class="post-list">';
-    for (const a of articles) {
-      const date = new Date(a.createdAt).toLocaleDateString('zh-CN', { year: 'numeric', month: 'short', day: 'numeric' });
-      content += `<article class="post-card">
-        <a href="/article/${a.slug}" class="post-card-link">
-          <div class="post-card-content">
-            <h3 class="post-card-title">${esc(a.title)}</h3>
-            <div class="post-card-meta">
-              <time><svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zm.5 4.5v3.793l2.354 2.353a.5.5 0 01-.708.708l-2.5-2.5A.5.5 0 017.5 8.5v-4a.5.5 0 011 0z"/></svg>${date}</time>
-              <span class="post-card-arrow">Read &rarr;</span>
-            </div>
-          </div>
-        </a>
-      </article>`;
-    }
-    content += '</div>';
+  let list = '';
+  for (const a of articles) {
+    const d = new Date(a.createdAt);
+    const date = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    list += `<a href="/article/${a.slug}" class="p-item"><span class="p-title">${esc(a.title)}</span><time>${date}</time></a>`;
   }
 
-  let pagination = '';
+  let pag = '';
   if (totalPages > 1) {
-    pagination = '<div class="pagination">';
-    if (page > 1) pagination += `<a href="/?page=${page - 1}" class="page-link prev"><svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 010 .708L5.707 8l5.647 5.646a.5.5 0 01-.708.708l-6-6a.5.5 0 010-.708l6-6a.5.5 0 01.708 0z"/></svg>Prev</a>`;
-    pagination += `<span class="page-num">${page} / ${totalPages}</span>`;
-    if (page < totalPages) pagination += `<a href="/?page=${page + 1}" class="page-link next">Next<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path fill-rule="evenodd" d="M4.646 1.646a.5.5 0 01.708 0l6 6a.5.5 0 010 .708l-6 6a.5.5 0 01-.708-.708L10.293 8 4.646 2.354a.5.5 0 010-.708z"/></svg></a>`;
-    pagination += '</div>';
+    pag = '<div class="pag">';
+    if (page > 1) pag += `<a href="/?page=${page-1}">&laquo; 上一页</a>`;
+    pag += `<span>${page} / ${totalPages}</span>`;
+    if (page < totalPages) pag += `<a href="/?page=${page+1}">下一页 &raquo;</a>`;
+    pag += '</div>';
   }
 
-  content += pagination + '</section>';
+  const content = `<div class="home">
+    <h1 class="site-title">${esc(blogTitle)}</h1>
+    <p class="site-desc">${esc(env.BLOG_DESC || '记录与分享')}</p>
+    <div class="p-list">${list || '<p class="empty">暂无文章</p>'}</div>
+    ${pag}
+  </div>`;
   return html(layout(blogTitle, content, env));
 }
 
 async function handleArticle(env, slug) {
   const article = await env.BLOG_KV.get(`article:${slug}`, 'json');
-  if (!article || !article.published) return html(layout('404', '<div class="not-found"><div class="nf-code">404</div><p>Article not found</p><a href="/" class="btn btn-primary">Back</a></div>', env));
-  const date = new Date(article.createdAt).toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' });
-  const body = `
-    <article class="article-page">
-      <header class="article-header">
-        <a href="/" class="back-nav"><svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 010 .708L5.707 8l5.647 5.646a.5.5 0 01-.708.708l-6-6a.5.5 0 010-.708l6-6a.5.5 0 01.708 0z"/></svg>All Posts</a>
-        <h1>${esc(article.title)}</h1>
-        <div class="article-meta"><time><svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zm.5 4.5v3.793l2.354 2.353a.5.5 0 01-.708.708l-2.5-2.5A.5.5 0 017.5 8.5v-4a.5.5 0 011 0z"/></svg>${date}</time></div>
-      </header>
-      <div class="article-body content" id="rendered-content"></div>
-      <footer class="article-footer">
-        <a href="/" class="btn btn-outline">Back to All Posts</a>
-      </footer>
-    </article>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"><\/script>
-    <script>document.getElementById('rendered-content').innerHTML=marked.parse(${JSON.stringify(article.content)});<\/script>`;
+  if (!article || !article.published) return html(layout('404', '<div class="nf"><span>404</span><p>文章不存在</p><a href="/">返回</a></div>', env));
+  const d = new Date(article.createdAt);
+  const date = `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`;
+  const body = `<article class="post">
+    <h1 class="post-title">${esc(article.title)}</h1>
+    <div class="post-meta"><time>${date}</time></div>
+    <div class="post-body" id="md-content"></div>
+    <div class="post-nav"><a href="/">&larr; 返回首页</a></div>
+  </article>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"><\/script>
+  <script>document.getElementById('md-content').innerHTML=marked.parse(${JSON.stringify(article.content)});<\/script>`;
   return html(layout(article.title, body, env));
 }
 
 function handleLoginPage(error = '') {
-  const body = `
-    <div class="login-page">
-      <div class="login-card">
-        <div class="login-header">
-          <div class="login-icon"><svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
-          <h1>Admin Login</h1>
-          <p>Please enter your credentials</p>
-        </div>
-        ${error ? `<div class="alert alert-error"><svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM7 4h2v5H7V4zm0 6h2v2H7v-2z"/></svg>${error}</div>` : ''}
-        <form method="POST" action="/login" class="login-form">
-          <div class="field">
-            <label for="username">Username</label>
-            <div class="input-wrap"><svg viewBox="0 0 16 16" width="16" height="16" fill="var(--muted)"><path d="M8 8a3 3 0 100-6 3 3 0 000 6zm-5 6s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3z"/></svg><input type="text" id="username" name="username" required autocomplete="username" placeholder="Enter username"></div>
-          </div>
-          <div class="field">
-            <label for="password">Password</label>
-            <div class="input-wrap"><svg viewBox="0 0 16 16" width="16" height="16" fill="var(--muted)"><path d="M8 1a2 2 0 012 2v4H6V3a2 2 0 012-2zm3 6V3a3 3 0 00-6 0v4a2 2 0 00-2 2v5a2 2 0 002 2h6a2 2 0 002-2V9a2 2 0 00-2-2z"/></svg><input type="password" id="password" name="password" required autocomplete="current-password" placeholder="Enter password"></div>
-          </div>
-          <button type="submit" class="btn btn-primary btn-full">Login</button>
-        </form>
-      </div>
-    </div>`;
-  return html(layout('Login', body, {}));
+  const body = `<div class="login-wrap">
+    <div class="login-box">
+      <h2>管理员登录</h2>
+      ${error ? `<div class="err">${error}</div>` : ''}
+      <form method="POST" action="/login">
+        <input type="text" name="username" required placeholder="用户名" autocomplete="username">
+        <input type="password" name="password" required placeholder="密码" autocomplete="current-password">
+        <button type="submit">登录</button>
+      </form>
+    </div>
+  </div>`;
+  return html(layout('登录', body, {}));
 }
 
 async function handleLogin(request, env) {
   const form = await request.formData();
-  const username = form.get('username');
-  const password = form.get('password');
-  if (username !== env.ADMIN_USER || password !== env.ADMIN_PASS) return handleLoginPage('Username or password is incorrect');
+  if (form.get('username') !== env.ADMIN_USER || form.get('password') !== env.ADMIN_PASS) return handleLoginPage('用户名或密码错误');
   const token = generateToken();
   await env.BLOG_KV.put(`session:${token}`, JSON.stringify({ expiresAt: Date.now() + 86400000 }), { expirationTtl: 86400 });
   return redirect('/admin', { 'Set-Cookie': `session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400` });
@@ -181,62 +132,34 @@ async function handleLogout(request, env) {
 async function handleAdmin(request, env) {
   if (!(await isAuthenticated(request, env))) return redirect('/login');
   const index = await getIndex(env);
-  const pubCount = index.filter(a => a.published).length;
-  const draftCount = index.length - pubCount;
   let rows = '';
   for (const a of index) {
-    const status = a.published
-      ? '<span class="tag tag-success"><svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>Published</span>'
-      : '<span class="tag tag-muted"><svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><path d="M14 1H2a1 1 0 00-1 1v12a1 1 0 001 1h12a1 1 0 001-1V2a1 1 0 00-1-1zM2 0a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2V2a2 2 0 00-2-2H2z"/></svg>Draft</span>';
     const date = new Date(a.createdAt).toLocaleDateString('zh-CN');
-    rows += `<div class="admin-row">
-      <div class="admin-row-main">
-        <h4>${esc(a.title)}</h4>
-        <div class="admin-row-meta">${status}<span class="meta-date">${date}</span></div>
-      </div>
-      <div class="admin-row-actions">
-        <a href="/admin/edit/${a.slug}" class="btn btn-sm btn-outline"><svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M12.146.146a.5.5 0 01.708 0l3 3a.5.5 0 010 .708l-10 10a.5.5 0 01-.168.11l-5 2a.5.5 0 01-.65-.65l2-5a.5.5 0 01.11-.168l10-10z"/></svg>Edit</a>
-        <form method="POST" action="/admin/delete/${a.slug}" style="display:inline" onsubmit="return confirm('Confirm delete this article?')">
-          <button class="btn btn-sm btn-ghost-danger"><svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M5.5 5.5A.5.5 0 016 6v6a.5.5 0 01-1 0V6a.5.5 0 01.5-.5zm2.5 0a.5.5 0 01.5.5v6a.5.5 0 01-1 0V6a.5.5 0 01.5-.5zm3 .5a.5.5 0 00-1 0v6a.5.5 0 001 0V6z"/><path fill-rule="evenodd" d="M14.5 3a1 1 0 01-1 1H13v9a2 2 0 01-2 2H5a2 2 0 01-2-2V4h-.5a1 1 0 01-1-1V2a1 1 0 011-1H6a1 1 0 011-1h2a1 1 0 011 1h3.5a1 1 0 011 1v1z"/></svg>Delete</button>
-        </form>
+    const st = a.published ? '<i class="dot green"></i>已发布' : '<i class="dot gray"></i>草稿';
+    rows += `<div class="a-row">
+      <div class="a-info"><strong>${esc(a.title)}</strong><small>${st} · ${date}</small></div>
+      <div class="a-acts">
+        <a href="/admin/edit/${a.slug}">编辑</a>
+        <form method="POST" action="/admin/delete/${a.slug}" style="display:inline" onsubmit="return confirm('确定删除？')"><button class="del">删除</button></form>
       </div>
     </div>`;
   }
-  const body = `
-    <div class="admin-page">
-      <div class="admin-header">
-        <div class="admin-header-left">
-          <h1><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Dashboard</h1>
-        </div>
-        <div class="admin-header-right">
-          <a href="/" class="btn btn-ghost" target="_blank"><svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M8.636 3.5a.5.5 0 00-.5-.5H1.5A1.5 1.5 0 000 4.5v10A1.5 1.5 0 001.5 16h10a1.5 1.5 0 001.5-1.5V7.864a.5.5 0 00-1 0V14.5a.5.5 0 01-.5.5h-10a.5.5 0 01-.5-.5v-10a.5.5 0 01.5-.5h6.636a.5.5 0 00.5-.5z"/><path d="M16 .5a.5.5 0 00-.5-.5h-5a.5.5 0 000 1h3.793L6.146 9.146a.5.5 0 10.708.708L15 1.707V5.5a.5.5 0 001 0v-5z"/></svg>View Blog</a>
-          <a href="/logout" class="btn btn-ghost"><svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path fill-rule="evenodd" d="M10 12.5a.5.5 0 01-.5.5h-8a.5.5 0 01-.5-.5v-9a.5.5 0 01.5-.5h8a.5.5 0 01.5.5v2a.5.5 0 001 0v-2A1.5 1.5 0 009.5 2h-8A1.5 1.5 0 000 3.5v9A1.5 1.5 0 001.5 14h8a1.5 1.5 0 001.5-1.5v-2a.5.5 0 00-1 0v2z"/><path fill-rule="evenodd" d="M15.854 8.354a.5.5 0 000-.708l-3-3a.5.5 0 00-.708.708L14.293 7.5H5.5a.5.5 0 000 1h8.793l-2.147 2.146a.5.5 0 00.708.708l3-3z"/></svg>Logout</a>
-        </div>
-      </div>
-      <div class="stats-grid">
-        <div class="stat-card"><div class="stat-icon stat-icon-total"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div class="stat-info"><span class="stat-num">${index.length}</span><span class="stat-label">Total Articles</span></div></div>
-        <div class="stat-card"><div class="stat-icon stat-icon-pub"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div><div class="stat-info"><span class="stat-num">${pubCount}</span><span class="stat-label">Published</span></div></div>
-        <div class="stat-card"><div class="stat-icon stat-icon-draft"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></div><div class="stat-info"><span class="stat-num">${draftCount}</span><span class="stat-label">Drafts</span></div></div>
-      </div>
-      <div class="admin-content-section">
-        <div class="section-bar"><h3>All Articles</h3><a href="/admin/new" class="btn btn-primary"><svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M8 2a.5.5 0 01.5.5v5h5a.5.5 0 010 1h-5v5a.5.5 0 01-1 0v-5h-5a.5.5 0 010-1h5v-5A.5.5 0 018 2z"/></svg>New Post</a></div>
-        <div class="admin-list">
-          ${rows || '<div class="empty-state"><p>No articles yet, create your first one</p></div>'}
-        </div>
-      </div>
-    </div>`;
-  return html(layout('Dashboard', body, env));
+  const body = `<div class="admin">
+    <div class="admin-top"><h2>文章管理</h2><div class="admin-acts"><a href="/admin/new" class="btn-p">写文章</a><a href="/" target="_blank">查看博客</a><a href="/logout">退出</a></div></div>
+    <div class="admin-stats"><span><b>${index.length}</b> 总计</span><span><b>${index.filter(a=>a.published).length}</b> 已发布</span><span><b>${index.filter(a=>!a.published).length}</b> 草稿</span></div>
+    <div class="a-list">${rows || '<p class="empty">暂无文章，开始写第一篇吧</p>'}</div>
+  </div>`;
+  return html(layout('管理后台', body, env));
 }
 
 async function handleAdminNew(request, env) {
   if (!(await isAuthenticated(request, env))) return redirect('/login');
-  return html(layout('New Post', editorForm('', '', true, '/admin/new'), env));
+  return html(layout('写文章', editorForm('', '', true, '/admin/new'), env));
 }
-
 async function handleAdminNewPost(request, env) {
   if (!(await isAuthenticated(request, env))) return redirect('/login');
   const form = await request.formData();
-  const title = form.get('title') || 'Untitled';
+  const title = form.get('title') || '无标题';
   const content = form.get('content') || '';
   const published = form.get('published') === 'on';
   const slug = slugify(title) + '-' + Date.now().toString(36);
@@ -247,14 +170,12 @@ async function handleAdminNewPost(request, env) {
   await saveIndex(env, index);
   return redirect('/admin');
 }
-
 async function handleAdminEdit(request, env, slug) {
   if (!(await isAuthenticated(request, env))) return redirect('/login');
   const article = await env.BLOG_KV.get(`article:${slug}`, 'json');
   if (!article) return redirect('/admin');
-  return html(layout('Edit Post', editorForm(article.title, article.content, article.published, `/admin/edit/${slug}`), env));
+  return html(layout('编辑文章', editorForm(article.title, article.content, article.published, `/admin/edit/${slug}`), env));
 }
-
 async function handleAdminEditPost(request, env, slug) {
   if (!(await isAuthenticated(request, env))) return redirect('/login');
   const article = await env.BLOG_KV.get(`article:${slug}`, 'json');
@@ -271,7 +192,6 @@ async function handleAdminEditPost(request, env, slug) {
   await saveIndex(env, index);
   return redirect('/admin');
 }
-
 async function handleAdminDelete(request, env, slug) {
   if (!(await isAuthenticated(request, env))) return redirect('/login');
   await env.BLOG_KV.delete(`article:${slug}`);
@@ -280,282 +200,237 @@ async function handleAdminDelete(request, env, slug) {
   return redirect('/admin');
 }
 
-// --- Helpers ---
-function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-
 function editorForm(title, content, published, action) {
-  return `
-    <div class="editor-page">
-      <form method="POST" action="${action}" class="editor-form">
-        <div class="editor-topbar">
-          <a href="/admin" class="back-nav"><svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 010 .708L5.707 8l5.647 5.646a.5.5 0 01-.708.708l-6-6a.5.5 0 010-.708l6-6a.5.5 0 01.708 0z"/></svg>Back</a>
-          <div class="editor-topbar-actions">
-            <label class="switch-label">
-              <input type="checkbox" name="published" ${published ? 'checked' : ''} class="switch-input">
-              <span class="switch-slider"></span>
-              <span class="switch-text">Publish</span>
-            </label>
-            <button type="submit" class="btn btn-primary"><svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>Save</button>
-          </div>
+  return `<div class="editor">
+    <form method="POST" action="${action}">
+      <div class="ed-top">
+        <a href="/admin">&larr; 返回</a>
+        <div class="ed-acts">
+          <label class="sw"><input type="checkbox" name="published" ${published?'checked':''}><span class="sw-s"></span>发布</label>
+          <button type="submit" class="btn-p">保存</button>
         </div>
-        <div class="editor-title-wrap">
-          <input type="text" name="title" value="${esc(title)}" required placeholder="Enter article title..." class="editor-title">
-        </div>
-        <div class="editor-container">
-          <div class="editor-pane">
-            <div class="pane-tab"><svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M14 3a1 1 0 01-1 1H3a1 1 0 010-2h10a1 1 0 011 1zM14 7a1 1 0 01-1 1H3a1 1 0 010-2h10a1 1 0 011 1zM3 11h4a1 1 0 010 2H3a1 1 0 010-2z"/></svg>Markdown</div>
-            <textarea name="content" id="editor" placeholder="Start writing...">${esc(content)}</textarea>
-          </div>
-          <div class="editor-pane">
-            <div class="pane-tab"><svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M2 2a2 2 0 012-2h8a2 2 0 012 2v12a2 2 0 01-2 2H4a2 2 0 01-2-2V2zm2-1a1 1 0 00-1 1v12a1 1 0 001 1h8a1 1 0 001-1V2a1 1 0 00-1-1H4z"/></svg>Preview</div>
-            <div id="preview" class="content preview-area"></div>
-          </div>
-        </div>
-      </form>
-    </div>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"><\/script>
-    <script>
-      const editor=document.getElementById('editor'),preview=document.getElementById('preview');
-      function update(){preview.innerHTML=marked.parse(editor.value)}
-      editor.addEventListener('input',update);update();
-      editor.addEventListener('keydown',function(e){if(e.key==='Tab'){e.preventDefault();const s=this.selectionStart,end=this.selectionEnd;this.value=this.value.substring(0,s)+'  '+this.value.substring(end);this.selectionStart=this.selectionEnd=s+2}});
-    <\/script>`;
+      </div>
+      <input type="text" name="title" value="${esc(title)}" required placeholder="文章标题..." class="ed-title">
+      <div class="ed-split">
+        <div class="ed-pane"><div class="ed-label">Markdown 编辑</div><textarea name="content" id="editor" placeholder="开始写作...">${esc(content)}</textarea></div>
+        <div class="ed-pane"><div class="ed-label">预览</div><div id="preview" class="post-body"></div></div>
+      </div>
+    </form>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"><\/script>
+  <script>
+    const e=document.getElementById('editor'),p=document.getElementById('preview');
+    function u(){p.innerHTML=marked.parse(e.value)}
+    e.addEventListener('input',u);u();
+    e.addEventListener('keydown',function(ev){if(ev.key==='Tab'){ev.preventDefault();const s=this.selectionStart;this.value=this.value.substring(0,s)+'  '+this.value.substring(this.selectionEnd);this.selectionStart=this.selectionEnd=s+2;u()}});
+  <\/script>`;
 }
-
-function html(body) { return new Response(body, { headers: { 'content-type': 'text/html;charset=UTF-8' } }); }
 
 function layout(title, content, env) {
   const blogTitle = (env && env.BLOG_TITLE) || 'My Blog';
   return `<!DOCTYPE html><html lang="zh-CN"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)} - ${esc(blogTitle)}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<title>${esc(title)}</title>
 <style>
-:root{
-  --bg:#fafbfc;--bg-card:#ffffff;--bg-elevated:#ffffff;--bg-inset:#f0f2f5;
-  --fg:#1a1a2e;--fg-secondary:#4a5568;--fg-muted:#8892a4;
-  --border:#e4e8ee;--border-light:#f0f2f5;
-  --accent:#5b5bd6;--accent-hover:#4747c2;--accent-light:#ededfd;--accent-subtle:#f5f5ff;
-  --success:#2d9d78;--success-light:#e6f7f1;
-  --danger:#e5484d;--danger-light:#ffeef0;--danger-hover:#d13438;
-  --shadow-xs:0 1px 2px rgba(0,0,0,.04);
-  --shadow-sm:0 2px 8px rgba(0,0,0,.06);
-  --shadow-md:0 4px 16px rgba(0,0,0,.08);
-  --shadow-lg:0 8px 32px rgba(0,0,0,.1);
-  --radius:8px;--radius-lg:14px;--radius-xl:20px;
-  --font-sans:'Inter',system-ui,-apple-system,sans-serif;
-  --font-mono:'JetBrains Mono',ui-monospace,monospace;
+/* === 主题系统 === */
+/* 默认：极简白 */
+:root,[data-theme="minimal"]{
+  --bg:#fff;--bg2:#f7f7f8;--fg:#222;--fg2:#555;--fg3:#999;
+  --bd:#eee;--accent:#333;--accent2:#555;--link:#0066cc;
+  --code-bg:#f5f5f5;--radius:4px;--font:system-ui,-apple-system,sans-serif;--font-mono:ui-monospace,'SF Mono',monospace;
 }
-@media(prefers-color-scheme:dark){:root{
-  --bg:#111118;--bg-card:#1c1c28;--bg-elevated:#242433;--bg-inset:#0d0d12;
-  --fg:#eeeef0;--fg-secondary:#a9adc1;--fg-muted:#6c7086;
-  --border:#2e2e3e;--border-light:#232334;
-  --accent:#8b8bf5;--accent-hover:#a5a5f7;--accent-light:#1f1f3a;--accent-subtle:#16162a;
-  --success:#3dd68c;--success-light:#0d2e1f;
-  --danger:#f87171;--danger-light:#2d1215;--danger-hover:#fca5a5;
-  --shadow-xs:0 1px 2px rgba(0,0,0,.2);
-  --shadow-sm:0 2px 8px rgba(0,0,0,.3);
-  --shadow-md:0 4px 16px rgba(0,0,0,.4);
-  --shadow-lg:0 8px 32px rgba(0,0,0,.5);
-}}
-[data-theme="light"]{--bg:#fafbfc;--bg-card:#ffffff;--bg-elevated:#ffffff;--bg-inset:#f0f2f5;--fg:#1a1a2e;--fg-secondary:#4a5568;--fg-muted:#8892a4;--border:#e4e8ee;--border-light:#f0f2f5;--accent:#5b5bd6;--accent-hover:#4747c2;--accent-light:#ededfd;--accent-subtle:#f5f5ff;--success:#2d9d78;--success-light:#e6f7f1;--danger:#e5484d;--danger-light:#ffeef0;--danger-hover:#d13438;--shadow-xs:0 1px 2px rgba(0,0,0,.04);--shadow-sm:0 2px 8px rgba(0,0,0,.06);--shadow-md:0 4px 16px rgba(0,0,0,.08);--shadow-lg:0 8px 32px rgba(0,0,0,.1)}
-[data-theme="dark"]{--bg:#111118;--bg-card:#1c1c28;--bg-elevated:#242433;--bg-inset:#0d0d12;--fg:#eeeef0;--fg-secondary:#a9adc1;--fg-muted:#6c7086;--border:#2e2e3e;--border-light:#232334;--accent:#8b8bf5;--accent-hover:#a5a5f7;--accent-light:#1f1f3a;--accent-subtle:#16162a;--success:#3dd68c;--success-light:#0d2e1f;--danger:#f87171;--danger-light:#2d1215;--danger-hover:#fca5a5;--shadow-xs:0 1px 2px rgba(0,0,0,.2);--shadow-sm:0 2px 8px rgba(0,0,0,.3);--shadow-md:0 4px 16px rgba(0,0,0,.4);--shadow-lg:0 8px 32px rgba(0,0,0,.5)}
+/* 暗夜 */
+[data-theme="dark"]{
+  --bg:#1a1a1a;--bg2:#242424;--fg:#e0e0e0;--fg2:#aaa;--fg3:#666;
+  --bd:#333;--accent:#e0e0e0;--accent2:#ccc;--link:#6cb6ff;
+  --code-bg:#2a2a2a;
+}
+/* GitHub */
+[data-theme="github"]{
+  --bg:#ffffff;--bg2:#f6f8fa;--fg:#1f2328;--fg2:#656d76;--fg3:#8b949e;
+  --bd:#d1d9e0;--accent:#1f2328;--accent2:#656d76;--link:#0969da;
+  --code-bg:#f6f8fa;
+}
+/* 暖色 */
+[data-theme="warm"]{
+  --bg:#fdf6e3;--bg2:#eee8d5;--fg:#073642;--fg2:#586e75;--fg3:#93a1a1;
+  --bd:#eee8d5;--accent:#073642;--accent2:#586e75;--link:#268bd2;
+  --code-bg:#eee8d5;
+}
+/* 紫夜 */
+[data-theme="purple"]{
+  --bg:#13111c;--bg2:#1c1a29;--fg:#e2dff0;--fg2:#a9a5c0;--fg3:#6c6888;
+  --bd:#2d2a3e;--accent:#e2dff0;--accent2:#a9a5c0;--link:#b4a5ff;
+  --code-bg:#1c1a29;
+}
+/* 绿意 */
+[data-theme="green"]{
+  --bg:#f0f5f0;--bg2:#e4ede4;--fg:#1a2e1a;--fg2:#3d5c3d;--fg3:#7a9a7a;
+  --bd:#d0e0d0;--accent:#1a2e1a;--accent2:#3d5c3d;--link:#1a7a3a;
+  --code-bg:#e4ede4;
+}
+
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:var(--font-sans);background:var(--bg);color:var(--fg);line-height:1.6;-webkit-font-smoothing:antialiased}
-.site-wrap{min-height:100vh;display:flex;flex-direction:column}
-.main-content{flex:1;max-width:760px;width:100%;margin:0 auto;padding:0 1.5rem}
+body{font-family:var(--font);background:var(--bg);color:var(--fg);line-height:1.7;font-size:15px;-webkit-font-smoothing:antialiased}
+a{color:var(--link);text-decoration:none}
+a:hover{text-decoration:underline}
 
-/* Navbar */
-.navbar{background:var(--bg-card);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100;backdrop-filter:saturate(180%) blur(12px);background:color-mix(in srgb,var(--bg-card) 80%,transparent)}
-.nav-inner{max-width:760px;margin:0 auto;padding:0 1.5rem;display:flex;align-items:center;justify-content:space-between;height:60px}
-.nav-brand{font-weight:700;font-size:1.15rem;color:var(--fg);text-decoration:none;display:flex;align-items:center;gap:.5rem}
-.nav-brand-dot{width:8px;height:8px;border-radius:50%;background:var(--accent)}
-.nav-right{display:flex;align-items:center;gap:.5rem}
-.nav-link{color:var(--fg-secondary);text-decoration:none;font-size:.875rem;font-weight:500;padding:.4rem .75rem;border-radius:var(--radius);transition:all .15s}
-.nav-link:hover{color:var(--accent);background:var(--accent-light)}
-.theme-toggle{width:36px;height:36px;border-radius:50%;border:1px solid var(--border);background:var(--bg-card);cursor:pointer;display:grid;place-items:center;transition:all .2s;color:var(--fg-muted)}
-.theme-toggle:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-light)}
-.theme-toggle svg{width:18px;height:18px}
+/* 导航 */
+.nav{border-bottom:1px solid var(--bd);padding:0 1rem}
+.nav-in{max-width:680px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;height:48px}
+.nav-brand{font-weight:700;color:var(--fg);text-decoration:none;font-size:.95rem}
+.nav-r{display:flex;align-items:center;gap:.25rem}
+.nav-r a,.nav-r button{color:var(--fg2);font-size:.8rem;padding:.3rem .5rem;border-radius:var(--radius);border:none;background:none;cursor:pointer;text-decoration:none;font-family:inherit}
+.nav-r a:hover,.nav-r button:hover{background:var(--bg2);color:var(--fg);text-decoration:none}
 
-/* Hero */
-.hero{padding:3.5rem 0 2.5rem;text-align:center}
-.hero-inner{display:flex;flex-direction:column;align-items:center;gap:.75rem}
-.hero-avatar{margin-bottom:.5rem}
-.hero-title{font-size:2rem;font-weight:800;letter-spacing:-.03em;background:linear-gradient(135deg,var(--fg),var(--accent));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-.hero-desc{color:var(--fg-secondary);font-size:1rem;font-weight:400}
-.hero-meta{color:var(--fg-muted);font-size:.85rem;display:flex;gap:1rem}
+/* 主题选择器 */
+.theme-panel{display:none;position:fixed;top:0;right:0;bottom:0;width:220px;background:var(--bg);border-left:1px solid var(--bd);padding:1rem;z-index:999;box-shadow:-4px 0 12px rgba(0,0,0,.08)}
+.theme-panel.open{display:block}
+.theme-panel h4{font-size:.8rem;color:var(--fg3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.75rem}
+.theme-panel .t-item{display:block;width:100%;text-align:left;padding:.5rem .6rem;border:1px solid var(--bd);border-radius:var(--radius);margin-bottom:.4rem;cursor:pointer;font-size:.85rem;background:var(--bg2);color:var(--fg);font-family:inherit;transition:border-color .15s}
+.theme-panel .t-item:hover{border-color:var(--fg3)}
+.theme-panel .t-item.active{border-color:var(--link);background:var(--bg)}
+.theme-overlay{display:none;position:fixed;inset:0;z-index:998}
+.theme-overlay.open{display:block}
 
-/* Posts */
-.posts-section{padding-bottom:3rem}
-.section-header{margin-bottom:1.25rem}
-.section-header h2{font-size:1.1rem;font-weight:600;color:var(--fg-secondary)}
-.post-list{display:flex;flex-direction:column;gap:.75rem}
-.post-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);transition:all .2s;overflow:hidden}
-.post-card:hover{border-color:var(--accent);box-shadow:var(--shadow-md);transform:translateY(-2px)}
-.post-card-link{display:block;padding:1.25rem 1.5rem;text-decoration:none;color:inherit}
-.post-card-title{font-size:1.1rem;font-weight:600;color:var(--fg);margin-bottom:.5rem;line-height:1.4}
-.post-card-meta{display:flex;align-items:center;justify-content:space-between}
-.post-card-meta time{display:flex;align-items:center;gap:.4rem;font-size:.8rem;color:var(--fg-muted)}
-.post-card-arrow{font-size:.8rem;color:var(--accent);font-weight:500;opacity:0;transform:translateX(-4px);transition:all .2s}
-.post-card:hover .post-card-arrow{opacity:1;transform:translateX(0)}
-.empty-state{text-align:center;padding:3rem;color:var(--fg-muted)}
-.empty-icon{margin-bottom:1rem}
+/* 主体 */
+.wrap{max-width:680px;margin:0 auto;padding:1.5rem 1rem 3rem}
 
-/* Pagination */
-.pagination{display:flex;justify-content:center;align-items:center;gap:1rem;padding:2rem 0}
-.page-link{display:flex;align-items:center;gap:.4rem;color:var(--accent);text-decoration:none;font-size:.875rem;font-weight:500;padding:.5rem 1rem;border:1px solid var(--border);border-radius:var(--radius);transition:all .15s}
-.page-link:hover{background:var(--accent-light);border-color:var(--accent)}
-.page-num{color:var(--fg-muted);font-size:.85rem}
+/* 首页 */
+.site-title{font-size:1.4rem;font-weight:700;margin-bottom:.2rem}
+.site-desc{color:var(--fg2);font-size:.9rem;margin-bottom:1.5rem}
+.p-list{border-top:1px solid var(--bd)}
+.p-item{display:flex;align-items:baseline;justify-content:space-between;padding:.6rem 0;border-bottom:1px solid var(--bd);color:var(--fg);text-decoration:none;gap:1rem}
+.p-item:hover{background:var(--bg2);text-decoration:none}
+.p-item .p-title{font-weight:500;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.p-item time{color:var(--fg3);font-size:.8rem;font-variant-numeric:tabular-nums;flex-shrink:0}
+.pag{display:flex;align-items:center;justify-content:center;gap:1rem;margin-top:1.5rem;font-size:.85rem}
+.pag a{color:var(--link)}
+.pag span{color:var(--fg3)}
+.empty{color:var(--fg3);padding:2rem 0;text-align:center}
 
-/* Article page */
-.article-page{padding:2rem 0 3rem}
-.article-header{margin-bottom:2rem;padding-bottom:1.5rem;border-bottom:1px solid var(--border)}
-.article-header h1{font-size:2rem;font-weight:700;letter-spacing:-.02em;line-height:1.3;margin:.75rem 0}
-.article-meta{display:flex;align-items:center;gap:1rem}
-.article-meta time{display:flex;align-items:center;gap:.4rem;font-size:.85rem;color:var(--fg-muted)}
-.back-nav{display:inline-flex;align-items:center;gap:.3rem;color:var(--fg-muted);text-decoration:none;font-size:.85rem;font-weight:500;transition:color .15s}
-.back-nav:hover{color:var(--accent)}
-.article-footer{margin-top:3rem;padding-top:1.5rem;border-top:1px solid var(--border)}
+/* 文章 */
+.post{padding:0}
+.post-title{font-size:1.6rem;font-weight:700;line-height:1.3;margin-bottom:.5rem}
+.post-meta{color:var(--fg3);font-size:.85rem;margin-bottom:1.5rem;padding-bottom:1rem;border-bottom:1px solid var(--bd)}
+.post-body{line-height:1.8}
+.post-body h1,.post-body h2,.post-body h3{margin:1.5rem 0 .5rem;font-weight:600}
+.post-body h1{font-size:1.4rem}.post-body h2{font-size:1.2rem}.post-body h3{font-size:1.05rem}
+.post-body p{margin:.6rem 0}
+.post-body ul,.post-body ol{margin:.6rem 0;padding-left:1.5rem}
+.post-body li{margin:.2rem 0}
+.post-body pre{background:var(--code-bg);border:1px solid var(--bd);padding:.8rem 1rem;border-radius:var(--radius);overflow-x:auto;margin:.8rem 0;font-family:var(--font-mono);font-size:.85rem;line-height:1.6}
+.post-body code{font-family:var(--font-mono);background:var(--code-bg);padding:.1rem .35rem;border-radius:3px;font-size:.85em}
+.post-body pre code{background:none;padding:0}
+.post-body blockquote{border-left:3px solid var(--bd);padding:.4rem .8rem;margin:.8rem 0;color:var(--fg2)}
+.post-body img{max-width:100%;border-radius:var(--radius)}
+.post-body table{width:100%;border-collapse:collapse;margin:.8rem 0;font-size:.9rem}
+.post-body th,.post-body td{padding:.4rem .6rem;border:1px solid var(--bd);text-align:left}
+.post-body th{background:var(--bg2);font-weight:600}
+.post-body hr{border:none;border-top:1px solid var(--bd);margin:1.5rem 0}
+.post-body a{color:var(--link)}
+.post-nav{margin-top:2rem;padding-top:1rem;border-top:1px solid var(--bd)}
 
-/* Content typography */
-.content{font-size:1rem;line-height:1.8;color:var(--fg-secondary)}
-.content h1,.content h2,.content h3{color:var(--fg);font-weight:600;margin:2rem 0 .75rem;letter-spacing:-.01em}
-.content h1{font-size:1.75rem}.content h2{font-size:1.4rem}.content h3{font-size:1.15rem}
-.content p{margin:.75rem 0}
-.content a{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
-.content strong{color:var(--fg);font-weight:600}
-.content ul,.content ol{margin:.75rem 0;padding-left:1.5rem}
-.content li{margin:.3rem 0}
-.content pre{background:var(--bg-inset);border:1px solid var(--border);padding:1rem 1.25rem;border-radius:var(--radius);overflow-x:auto;margin:1.25rem 0;font-family:var(--font-mono);font-size:.85rem;line-height:1.7}
-.content code{font-family:var(--font-mono);background:var(--bg-inset);padding:.15rem .4rem;border-radius:4px;font-size:.85em;color:var(--accent)}
-.content pre code{background:none;padding:0;color:inherit;font-size:inherit}
-.content blockquote{border-left:3px solid var(--accent);padding:.75rem 1.25rem;margin:1.25rem 0;background:var(--accent-subtle);border-radius:0 var(--radius) var(--radius) 0;color:var(--fg-secondary)}
-.content img{max-width:100%;border-radius:var(--radius);margin:1.25rem 0;box-shadow:var(--shadow-sm)}
-.content hr{border:none;border-top:1px solid var(--border);margin:2rem 0}
-.content table{width:100%;border-collapse:collapse;margin:1.25rem 0;font-size:.9rem}
-.content th,.content td{padding:.6rem .8rem;border:1px solid var(--border);text-align:left}
-.content th{background:var(--bg-inset);font-weight:600;color:var(--fg)}
+/* 登录 */
+.login-wrap{display:flex;justify-content:center;padding:3rem 0}
+.login-box{width:100%;max-width:320px}
+.login-box h2{font-size:1.1rem;margin-bottom:1rem}
+.login-box input{display:block;width:100%;padding:.55rem .7rem;margin-bottom:.7rem;border:1px solid var(--bd);border-radius:var(--radius);background:var(--bg);color:var(--fg);font-size:.9rem;font-family:inherit}
+.login-box input:focus{outline:none;border-color:var(--link)}
+.login-box button{width:100%;padding:.55rem;background:var(--fg);color:var(--bg);border:none;border-radius:var(--radius);font-size:.9rem;cursor:pointer;font-family:inherit}
+.login-box button:hover{opacity:.85}
+.err{color:#d32f2f;font-size:.85rem;margin-bottom:.7rem;padding:.4rem .6rem;background:#ffeef0;border-radius:var(--radius)}
 
-/* Login */
-.login-page{display:flex;align-items:center;justify-content:center;min-height:calc(100vh - 200px)}
-.login-card{width:100%;max-width:400px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-xl);padding:2.5rem;box-shadow:var(--shadow-lg)}
-.login-header{text-align:center;margin-bottom:2rem}
-.login-icon{margin-bottom:1rem}
-.login-header h1{font-size:1.4rem;font-weight:700}
-.login-header p{color:var(--fg-muted);font-size:.9rem;margin-top:.25rem}
-.login-form .field{margin-bottom:1.25rem}
-.login-form label{display:block;font-size:.8rem;font-weight:600;color:var(--fg-secondary);margin-bottom:.4rem;text-transform:uppercase;letter-spacing:.03em}
-.input-wrap{position:relative;display:flex;align-items:center}
-.input-wrap svg{position:absolute;left:.85rem;pointer-events:none}
-.input-wrap input{width:100%;padding:.7rem .85rem .7rem 2.5rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--fg);font-size:.95rem;transition:all .15s}
-.input-wrap input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-light)}
-.input-wrap input::placeholder{color:var(--fg-muted)}
-.alert{display:flex;align-items:center;gap:.5rem;padding:.75rem 1rem;border-radius:var(--radius);margin-bottom:1.25rem;font-size:.875rem}
-.alert-error{background:var(--danger-light);color:var(--danger);border:1px solid color-mix(in srgb,var(--danger) 20%,transparent)}
+/* 后台 */
+.admin{padding:0}
+.admin-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem}
+.admin-top h2{font-size:1.1rem;font-weight:700}
+.admin-acts{display:flex;gap:.5rem;align-items:center;font-size:.85rem}
+.admin-acts a{color:var(--fg2);padding:.3rem .6rem;border:1px solid var(--bd);border-radius:var(--radius)}
+.admin-acts a:hover{border-color:var(--fg3);text-decoration:none}
+.btn-p{background:var(--fg)!important;color:var(--bg)!important;border-color:var(--fg)!important;font-weight:500}
+.admin-stats{display:flex;gap:1.5rem;margin-bottom:1rem;font-size:.85rem;color:var(--fg2)}
+.admin-stats b{color:var(--fg);font-size:1rem}
+.a-list{border-top:1px solid var(--bd)}
+.a-row{display:flex;align-items:center;justify-content:space-between;padding:.6rem 0;border-bottom:1px solid var(--bd);gap:.5rem}
+.a-info{flex:1;min-width:0}
+.a-info strong{display:block;font-size:.9rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.a-info small{color:var(--fg3);font-size:.8rem;display:flex;align-items:center;gap:.4rem}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%}
+.dot.green{background:#2d9d78}
+.dot.gray{background:var(--fg3)}
+.a-acts{display:flex;gap:.4rem;font-size:.8rem;flex-shrink:0}
+.a-acts a{color:var(--link);padding:.2rem .5rem;border:1px solid var(--bd);border-radius:var(--radius)}
+.a-acts a:hover{text-decoration:none;border-color:var(--link)}
+.del{background:none;border:1px solid var(--bd);color:var(--fg3);padding:.2rem .5rem;border-radius:var(--radius);cursor:pointer;font-size:.8rem;font-family:inherit}
+.del:hover{color:#d32f2f;border-color:#d32f2f}
 
-/* Buttons */
-.btn{display:inline-flex;align-items:center;gap:.4rem;padding:.55rem 1.1rem;border:1px solid transparent;border-radius:var(--radius);cursor:pointer;text-decoration:none;font-size:.875rem;font-weight:500;transition:all .15s;font-family:inherit}
-.btn-primary{background:var(--accent);color:#fff;border-color:var(--accent)}
-.btn-primary:hover{background:var(--accent-hover);transform:translateY(-1px);box-shadow:var(--shadow-sm)}
-.btn-outline{background:transparent;color:var(--fg-secondary);border-color:var(--border)}
-.btn-outline:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-light)}
-.btn-ghost{background:transparent;color:var(--fg-secondary);border:none;padding:.5rem .75rem}
-.btn-ghost:hover{color:var(--accent);background:var(--accent-light)}
-.btn-ghost-danger{background:transparent;color:var(--fg-muted);border:1px solid var(--border);border-radius:var(--radius);padding:.4rem .8rem;cursor:pointer;font-size:.8rem;font-family:inherit;display:inline-flex;align-items:center;gap:.3rem;transition:all .15s}
-.btn-ghost-danger:hover{color:var(--danger);border-color:var(--danger);background:var(--danger-light)}
-.btn-full{width:100%;justify-content:center;padding:.75rem}
-.btn-sm{padding:.35rem .7rem;font-size:.8rem}
-
-/* Admin */
-.admin-page{padding:2rem 0 3rem}
-.admin-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:2rem;flex-wrap:wrap;gap:1rem}
-.admin-header-left h1{font-size:1.5rem;font-weight:700;display:flex;align-items:center;gap:.5rem}
-.admin-header-right{display:flex;gap:.5rem}
-.stats-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:2rem}
-.stat-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:1.25rem;display:flex;align-items:center;gap:1rem;transition:all .15s}
-.stat-card:hover{box-shadow:var(--shadow-sm);border-color:color-mix(in srgb,var(--border) 50%,var(--accent))}
-.stat-icon{width:44px;height:44px;border-radius:var(--radius);display:grid;place-items:center}
-.stat-icon svg{width:22px;height:22px}
-.stat-icon-total{background:var(--accent-light);color:var(--accent)}
-.stat-icon-pub{background:var(--success-light);color:var(--success)}
-.stat-icon-draft{background:var(--bg-inset);color:var(--fg-muted)}
-.stat-num{font-size:1.5rem;font-weight:700;display:block;line-height:1.2}
-.stat-label{font-size:.75rem;color:var(--fg-muted);text-transform:uppercase;letter-spacing:.04em}
-.admin-content-section{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
-.section-bar{display:flex;justify-content:space-between;align-items:center;padding:1rem 1.5rem;border-bottom:1px solid var(--border);background:var(--bg-inset)}
-.section-bar h3{font-size:.9rem;font-weight:600;color:var(--fg-secondary)}
-.admin-list{divide-y divide-border}
-.admin-row{display:flex;align-items:center;justify-content:space-between;padding:1rem 1.5rem;border-bottom:1px solid var(--border);transition:background .1s}
-.admin-row:last-child{border-bottom:none}
-.admin-row:hover{background:var(--bg-inset)}
-.admin-row-main h4{font-size:.95rem;font-weight:600;margin-bottom:.3rem}
-.admin-row-meta{display:flex;align-items:center;gap:.75rem}
-.meta-date{font-size:.8rem;color:var(--fg-muted)}
-.admin-row-actions{display:flex;gap:.5rem;align-items:center}
-.tag{display:inline-flex;align-items:center;gap:.3rem;font-size:.75rem;padding:.2rem .6rem;border-radius:20px;font-weight:500}
-.tag-success{background:var(--success-light);color:var(--success)}
-.tag-muted{background:var(--bg-inset);color:var(--fg-muted)}
-
-/* Editor */
-.editor-page{padding:1rem 0 3rem}
-.editor-topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;flex-wrap:wrap;gap:1rem}
-.editor-topbar-actions{display:flex;align-items:center;gap:1rem}
-.editor-title-wrap{margin-bottom:1rem}
-.editor-title{width:100%;padding:.75rem 0;border:none;border-bottom:2px solid var(--border);background:transparent;color:var(--fg);font-size:1.5rem;font-weight:700;font-family:var(--font-sans);transition:border-color .15s}
-.editor-title:focus{outline:none;border-color:var(--accent)}
-.editor-title::placeholder{color:var(--fg-muted)}
-.editor-container{display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;background:var(--bg-card);box-shadow:var(--shadow-sm)}
-@media(max-width:768px){.editor-container{grid-template-columns:1fr}}
-.editor-pane{display:flex;flex-direction:column;min-height:500px}
-.editor-pane:first-child{border-right:1px solid var(--border)}
-@media(max-width:768px){.editor-pane:first-child{border-right:none;border-bottom:1px solid var(--border)}}
-.pane-tab{display:flex;align-items:center;gap:.5rem;padding:.6rem 1rem;background:var(--bg-inset);font-size:.8rem;font-weight:600;color:var(--fg-muted);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border)}
-#editor{flex:1;width:100%;padding:1.25rem;border:none;background:transparent;color:var(--fg);font-family:var(--font-mono);font-size:.875rem;line-height:1.7;resize:none}
+/* 编辑器 */
+.editor{padding:0}
+.ed-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem}
+.ed-top a{color:var(--fg2);font-size:.85rem}
+.ed-acts{display:flex;align-items:center;gap:.75rem}
+.ed-title{width:100%;padding:.5rem 0;border:none;border-bottom:1px solid var(--bd);background:none;color:var(--fg);font-size:1.3rem;font-weight:700;font-family:inherit;margin-bottom:1rem}
+.ed-title:focus{outline:none;border-color:var(--link)}
+.ed-split{display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--bd);border-radius:var(--radius);overflow:hidden}
+@media(max-width:700px){.ed-split{grid-template-columns:1fr}}
+.ed-pane{display:flex;flex-direction:column;min-height:420px}
+.ed-pane:first-child{border-right:1px solid var(--bd)}
+@media(max-width:700px){.ed-pane:first-child{border-right:none;border-bottom:1px solid var(--bd)}}
+.ed-label{padding:.4rem .7rem;background:var(--bg2);font-size:.75rem;color:var(--fg3);border-bottom:1px solid var(--bd);font-weight:500;text-transform:uppercase;letter-spacing:.03em}
+#editor{flex:1;width:100%;padding:.8rem;border:none;background:var(--bg);color:var(--fg);font-family:var(--font-mono);font-size:.85rem;line-height:1.6;resize:none}
 #editor:focus{outline:none}
-#editor::placeholder{color:var(--fg-muted)}
-.preview-area{flex:1;padding:1.25rem;overflow-y:auto}
+#preview{flex:1;padding:.8rem;overflow-y:auto}
 
-/* Switch toggle */
-.switch-label{display:flex;align-items:center;gap:.5rem;cursor:pointer;font-size:.875rem;color:var(--fg-secondary)}
-.switch-input{display:none}
-.switch-slider{width:36px;height:20px;background:var(--border);border-radius:10px;position:relative;transition:background .2s}
-.switch-slider::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .2s;box-shadow:var(--shadow-xs)}
-.switch-input:checked+.switch-slider{background:var(--accent)}
-.switch-input:checked+.switch-slider::after{transform:translateX(16px)}
+/* 开关 */
+.sw{display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.85rem;color:var(--fg2)}
+.sw input{display:none}
+.sw-s{width:28px;height:16px;background:var(--bd);border-radius:8px;position:relative;transition:background .2s}
+.sw-s::after{content:'';position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#fff;transition:transform .2s}
+.sw input:checked+.sw-s{background:var(--link)}
+.sw input:checked+.sw-s::after{transform:translateX(12px)}
 
 /* 404 */
-.not-found{text-align:center;padding:5rem 0}
-.nf-code{font-size:5rem;font-weight:800;color:var(--fg-muted);opacity:.3;line-height:1}
-.not-found p{color:var(--fg-secondary);margin:1rem 0 2rem;font-size:1.1rem}
+.nf{text-align:center;padding:4rem 0}
+.nf span{font-size:3rem;font-weight:700;color:var(--fg3);opacity:.4}
+.nf p{color:var(--fg2);margin:.5rem 0 1rem}
 
-/* Footer */
-.site-footer{text-align:center;padding:2rem 0;color:var(--fg-muted);font-size:.8rem;border-top:1px solid var(--border)}
+/* 页脚 */
+.foot{text-align:center;padding:1.5rem 0;color:var(--fg3);font-size:.75rem;border-top:1px solid var(--bd);margin-top:2rem}
 
 @media(max-width:640px){
-  .hero-title{font-size:1.6rem}
-  .article-header h1{font-size:1.5rem}
-  .stats-grid{grid-template-columns:1fr}
-  .admin-header{flex-direction:column;align-items:flex-start}
-  .admin-row{flex-direction:column;align-items:flex-start;gap:.75rem}
-  .editor-topbar{flex-direction:column;align-items:flex-start}
+  .site-title{font-size:1.2rem}
+  .post-title{font-size:1.3rem}
+  .admin-top{flex-direction:column;align-items:flex-start}
+  .a-row{flex-direction:column;align-items:flex-start;gap:.3rem}
 }
 </style></head>
-<body><div class="site-wrap">
-<nav class="navbar"><div class="nav-inner">
-  <a href="/" class="nav-brand"><span class="nav-brand-dot"></span>${esc(blogTitle)}</a>
-  <div class="nav-right">
-    <a href="/" class="nav-link">Posts</a>
-    <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-    </button>
+<body>
+<nav class="nav"><div class="nav-in">
+  <a href="/" class="nav-brand">${esc(blogTitle)}</a>
+  <div class="nav-r">
+    <a href="/">首页</a>
+    <button onclick="openTheme()">主题</button>
   </div>
 </div></nav>
-<main class="main-content">${content}</main>
-<footer class="site-footer">Powered by Cloudflare Workers</footer>
+<div class="wrap">${content}</div>
+<footer class="foot">Powered by Cloudflare Workers</footer>
+<div class="theme-overlay" onclick="closeTheme()"></div>
+<div class="theme-panel" id="tp">
+  <h4>选择主题</h4>
+  <button class="t-item" data-t="minimal">极简白</button>
+  <button class="t-item" data-t="dark">暗夜</button>
+  <button class="t-item" data-t="github">GitHub</button>
+  <button class="t-item" data-t="warm">暖色</button>
+  <button class="t-item" data-t="purple">紫夜</button>
+  <button class="t-item" data-t="green">绿意</button>
 </div>
 <script>
-function toggleTheme(){const d=document.documentElement,c=d.getAttribute('data-theme'),n=c==='dark'?'light':c==='light'?'dark':(matchMedia('(prefers-color-scheme:dark)').matches?'light':'dark');d.setAttribute('data-theme',n);localStorage.setItem('theme',n)}
+function openTheme(){document.getElementById('tp').classList.add('open');document.querySelector('.theme-overlay').classList.add('open');updateActive()}
+function closeTheme(){document.getElementById('tp').classList.remove('open');document.querySelector('.theme-overlay').classList.remove('open')}
+function setTheme(t){document.documentElement.setAttribute('data-theme',t);localStorage.setItem('theme',t);updateActive()}
+function updateActive(){const c=localStorage.getItem('theme')||'minimal';document.querySelectorAll('.t-item').forEach(b=>{b.classList.toggle('active',b.dataset.t===c)})}
+document.querySelectorAll('.t-item').forEach(b=>b.addEventListener('click',()=>setTheme(b.dataset.t)));
 (()=>{const t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();
 </script></body></html>`;
 }
