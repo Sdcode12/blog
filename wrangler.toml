@@ -10,7 +10,7 @@ POSTS_PER_PAGE = "10"
 # Then fill in the id below
 [[kv_namespaces]]
 binding = "BLOG_KV"
-id = "bb2239bb83224db1a75e5fb4e52c66aa"
+id = ""
 
 
 # Set secrets via: npx wrangler secret put ADMIN_USER
