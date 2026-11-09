@@ -1,17 +1,26 @@
+import { getCurrentUser, handleUserRequest } from './user-auth.js';
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
 
-    if (path.startsWith('/article/') && method === 'GET') return handleArticle(env, path.replace('/article/', ''));
+    const userResponse = await handleUserRequest(request, env, (title, body, user) => frontPage(title, body, env, user));
+    if (userResponse) return userResponse;
+    let user = null;
+    if (method === 'GET' && (path === '/' || path === '/search' || path.startsWith('/article/'))) {
+      try { user = await getCurrentUser(request, env); } catch { /* Public reading remains available during an account-service outage. */ }
+    }
+
+    if (path.startsWith('/article/') && method === 'GET') return handleArticle(env, path.replace('/article/', ''), user);
     if (path.startsWith('/admin/edit/') && method === 'GET') return handleAdminEdit(request, env, path.replace('/admin/edit/', ''));
     if (path.startsWith('/admin/edit/') && method === 'POST') return handleAdminEditPost(request, env, path.replace('/admin/edit/', ''));
     if (path.startsWith('/admin/delete/') && method === 'POST') return handleAdminDelete(request, env, path.replace('/admin/delete/', ''));
 
     const routes = {
-      'GET:/': () => handleHome(env, url),
-      'GET:/search': () => handleSearch(env, url),
+      'GET:/': () => handleHome(env, url, user),
+      'GET:/search': () => handleSearch(env, url, user),
       'GET:/login': () => handleLoginPage(),
       'POST:/login': () => handleLogin(request, env),
       'GET:/logout': () => handleLogout(request, env),
@@ -26,7 +35,7 @@ export default {
   }
 };
 
-function getCookie(req, name) { const c=req.headers.get('Cookie')||''; const m=c.match(new RegExp(`${name}=([^;]+)`)); return m?m[1]:null; }
+function getCookie(req, name) { const c=req.headers.get('Cookie')||''; const part=c.split(';').map(v=>v.trim()).find(v=>v.startsWith(`${name}=`)); return part?part.slice(name.length+1):null; }
 async function isAuth(req, env) { const t=getCookie(req,'session'); if(!t) return false; const s=await env.BLOG_KV.get(`session:${t}`,'json'); return s&&Date.now()<s.expiresAt; }
 function genToken() { const a=new Uint8Array(32); crypto.getRandomValues(a); return Array.from(a,b=>b.toString(16).padStart(2,'0')).join(''); }
 function redir(p,h={}) { const headers = new Headers({Location:p}); Object.entries(h).forEach(([k,v])=>headers.set(k,v)); return new Response(null,{status:302,headers}); }
@@ -34,7 +43,7 @@ async function getIndex(env) { return (await env.BLOG_KV.get('articles:index','j
 async function saveIndex(env,idx) { await env.BLOG_KV.put('articles:index',JSON.stringify(idx)); }
 function slugify(t) { return t.toLowerCase().replace(/[^a-z0-9一-鿿]+/g,'-').replace(/^-|-$/g,'')||`post-${Date.now()}`; }
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function html(b) { return new Response(b,{headers:{'content-type':'text/html;charset=UTF-8'}}); }
+function html(b) { return new Response(b,{headers:{'content-type':'text/html;charset=UTF-8','Cache-Control':'no-store'}}); }
 
 const TW_CONFIG = `tailwind.config={darkMode:"class",theme:{extend:{colors:{"primary-fixed-dim":"#c1c8ca","on-primary-fixed-variant":"#41484a","surface-tint":"#586062","on-background":"#131d21","surface":"#f1fbff","background":"#f1fbff","surface-bright":"#f1fbff","on-secondary":"#ffffff","primary-container":"#2d3436","outline-variant":"#c3c7c8","surface-container-lowest":"#ffffff","on-tertiary":"#ffffff","tertiary-container":"#3c302b","on-primary":"#ffffff","on-primary-container":"#959c9f","secondary":"#5d5f5f","error":"#ba1a1a","on-surface":"#131d21","secondary-fixed":"#e2e2e2","inverse-surface":"#283236","secondary-container":"#dfe0e0","inverse-on-surface":"#e7f3f7","on-primary-fixed":"#161d1f","primary-fixed":"#dde4e6","on-surface-variant":"#434749","on-secondary-container":"#616363","surface-container":"#e4f0f4","primary":"#181f21","error-container":"#ffdad6","tertiary":"#261b17","on-tertiary-container":"#a99790","tertiary-fixed":"#f3ded7","surface-container-highest":"#d9e4e9","tertiary-fixed-dim":"#d6c3bb","surface-variant":"#d9e4e9","surface-container-high":"#dfeaef","inverse-primary":"#c1c8ca","on-error":"#ffffff","secondary-fixed-dim":"#c6c6c7","surface-dim":"#d1dce0","surface-container-low":"#eaf5fa","outline":"#747879"},borderRadius:{DEFAULT:"0.125rem",lg:"0.25rem",xl:"0.5rem",full:"0.75rem"},spacing:{"section-padding":"80px","stack-lg":"32px",gutter:"24px","stack-sm":"8px","container-max-width":"720px","stack-md":"16px",unit:"8px"},fontFamily:{"headline-md":["Newsreader"],"headline-lg-mobile":["Newsreader"],"body-md":["Manrope"],display:["Newsreader"],"body-lg":["Manrope"],caption:["Manrope"],"headline-lg":["Newsreader"],"label-caps":["Manrope"]},fontSize:{"headline-md":["24px",{lineHeight:"1.3",fontWeight:"500"}],"headline-lg-mobile":["28px",{lineHeight:"1.2",fontWeight:"600"}],"body-md":["16px",{lineHeight:"1.6",fontWeight:"400"}],display:["48px",{lineHeight:"1.1",letterSpacing:"-0.02em",fontWeight:"600"}],"body-lg":["18px",{lineHeight:"1.8",fontWeight:"400"}],caption:["14px",{lineHeight:"1.4",fontWeight:"400"}],"headline-lg":["32px",{lineHeight:"1.2",fontWeight:"600"}],"label-caps":["12px",{lineHeight:"1.0",letterSpacing:"0.1em",fontWeight:"700"}]}}}}`;
 
@@ -46,7 +55,7 @@ const HEAD_COMMON = `<meta charset="utf-8"><meta name="viewport" content="width=
 <script>${TW_CONFIG}<\/script>`;
 
 // --- Front page layout (homepage, article, login) ---
-function frontPage(title, content, env) {
+function frontPage(title, content, env, user = null) {
   const blogTitle = (env&&env.BLOG_TITLE)||'Chronicle';
   const blogDesc = (env&&env.BLOG_DESC)||'';
   return `<!DOCTYPE html><html lang="zh-CN"><head>${HEAD_COMMON}<title>${esc(title)}</title></head>
@@ -56,6 +65,7 @@ function frontPage(title, content, env) {
 <div class="flex items-center gap-12"><a class="font-display text-headline-md text-primary tracking-tighter" href="/">${esc(blogTitle)}</a>
 <nav class="hidden md:flex items-center gap-8"><a class="font-label-caps text-label-caps text-primary border-b-2 border-primary" href="/">随笔</a><a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="/login">管理</a></nav></div>
 <div class="flex items-center gap-stack-md">
+${user ? `<a href="/account" class="text-caption text-primary max-w-[8rem] truncate" aria-label="个人中心">${esc(user.username)}</a><form method="POST" action="/user/logout"><button type="submit" class="text-caption text-on-surface-variant hover:text-primary">退出</button></form>` : '<a href="/user/login" class="text-caption text-primary whitespace-nowrap">登录</a><a href="/register" class="text-caption text-on-surface-variant whitespace-nowrap">注册</a>'}
 <form action="/search" method="GET" class="relative hidden sm:block"><span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px]">search</span><input name="q" class="bg-surface-container-low border-none rounded-full pl-10 pr-4 py-2 text-body-md w-48 focus:w-64 focus:ring-1 focus:ring-primary transition-all" placeholder="搜索文章..."></form>
 </div>
 </div></header>
@@ -86,7 +96,7 @@ function adminPage(title, content, env) {
 </div></body></html>`;
 }
 
-async function handleHome(env, url) {
+async function handleHome(env, url, user) {
   const pg = parseInt(url.searchParams.get('page')||'1');
   const pp = parseInt(env.POSTS_PER_PAGE||'10');
   const idx = await getIndex(env);
@@ -121,10 +131,10 @@ async function handleHome(env, url) {
 
   const content = `<main class="max-w-[1200px] mx-auto px-gutter py-12">
     <div class="space-y-12">${empty}${featured}${gridItems ? `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-stack-lg">${gridItems}</div>` : ''}</div>${pag}</main>`;
-  return html(frontPage(blogTitle, content, env));
+  return html(frontPage(blogTitle, content, env, user));
 }
 
-async function handleArticle(env, slug) {
+async function handleArticle(env, slug, user) {
   const art = await env.BLOG_KV.get(`article:${slug}`,'json');
   if (!art||!art.published) return html(frontPage('404','<div class="flex flex-col items-center py-section-padding"><h1 class="font-display text-display text-on-surface-variant opacity-30">404</h1><p class="mt-4 text-body-lg text-on-surface-variant">文章不存在</p><a href="/" class="mt-8 bg-primary text-on-primary px-8 py-3 font-label-caps uppercase tracking-widest">返回</a></div>',env));
   const d = new Date(art.createdAt);
@@ -139,7 +149,7 @@ async function handleArticle(env, slug) {
   </article></main>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"><\/script>
   <script>document.getElementById('md-out').innerHTML=marked.parse(${JSON.stringify(art.content)});<\/script>`;
-  return html(frontPage(art.title, body, env));
+  return html(frontPage(art.title, body, env, user));
 }
 
 function handleLoginPage(err='') {
@@ -170,7 +180,7 @@ async function handleLogin(req, env) {
 }
 async function handleLogout(req,env) { const t=getCookie(req,'session'); if(t) await env.BLOG_KV.delete(`session:${t}`); return redir('/',{'Set-Cookie':'session=; Path=/; Max-Age=0'}); }
 
-async function handleSearch(env, url) {
+async function handleSearch(env, url, user) {
   const q = (url.searchParams.get('q')||'').trim().toLowerCase();
   const idx = await getIndex(env);
   let results = [];
@@ -192,7 +202,7 @@ async function handleSearch(env, url) {
     ${q ? `<p class="font-label-caps text-label-caps text-on-surface-variant mb-6 uppercase tracking-widest">搜索 "${esc(q)}" 找到 ${results.length} 篇文章</p>` : ''}
     <div>${list||(!q?'<p class="text-on-surface-variant py-8 text-center">输入关键词搜索文章</p>':'<p class="text-on-surface-variant py-8 text-center">未找到相关文章</p>')}</div>
   </main>`;
-  return html(frontPage('搜索', content, env));
+  return html(frontPage('搜索', content, env, user));
 }
 
 async function handleAdmin(req, env) {

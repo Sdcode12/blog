@@ -12,6 +12,15 @@ POSTS_PER_PAGE = "10"
 binding = "BLOG_KV"
 id = ""
 
+# Create with: npx wrangler d1 create blog-users
+# Replace the placeholder before deploying, then apply migrations (see README).
+[[d1_databases]]
+binding = "USER_DB"
+database_name = "blog-users"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
 
 # Set secrets via: npx wrangler secret put ADMIN_USER
 #                  npx wrangler secret put ADMIN_PASS
+
